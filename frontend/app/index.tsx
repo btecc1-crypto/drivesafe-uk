@@ -17,14 +17,13 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import * as Notifications from 'expo-notifications';
-import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { useRouter } from 'expo-router';
+import { useOverlay } from '../src/native';
 
 const { width, height } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8001';
-const LOCATION_TASK_NAME = 'background-location-task';
 
 // Configure notifications
 Notifications.setNotificationHandler({
@@ -60,13 +59,14 @@ type AlertItem = Camera | CommunityReport;
 
 export default function DrivingMode() {
   const router = useRouter();
+  const overlay = useOverlay();
+  
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [speed, setSpeed] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string>('');
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [reports, setReports] = useState<CommunityReport[]>([]);
-  const [lastAlertedIds, setLastAlertedIds] = useState<Set<string>>(new Set());
   const [alertCooldowns, setAlertCooldowns] = useState<Map<string, number>>(new Map());
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -74,9 +74,9 @@ export default function DrivingMode() {
   const [isReporting, setIsReporting] = useState(false);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [drivingMode, setDrivingMode] = useState(false);
-  const [isOverlayExpanded, setIsOverlayExpanded] = useState(true);
   const [nextCamera, setNextCamera] = useState<AlertItem | null>(null);
   const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
+  const [overlayPermissionNeeded, setOverlayPermissionNeeded] = useState(false);
 
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const dataFetchInterval = useRef<NodeJS.Timeout | null>(null);
@@ -91,10 +91,53 @@ export default function DrivingMode() {
     };
   }, []);
 
+  // Set up overlay report callback
+  useEffect(() => {
+    if (overlay.isAvailable) {
+      overlay.setReportCallback((reportType) => {
+        handleReport(reportType as 'mobile_camera' | 'police_check');
+      });
+    }
+  }, [overlay.isAvailable]);
+
+  // Sync overlay state with driving mode
+  useEffect(() => {
+    if (overlay.isAvailable && overlay.hasPermission) {
+      if (drivingMode && !overlay.isRunning) {
+        overlay.startOverlay();
+      } else if (!drivingMode && overlay.isRunning) {
+        overlay.stopOverlay();
+      }
+    }
+  }, [drivingMode, overlay.isAvailable, overlay.hasPermission]);
+
+  // Update overlay with speed and camera info
+  useEffect(() => {
+    if (overlay.isRunning) {
+      overlay.updateSpeed(speed);
+      overlay.setAlertsEnabled(drivingMode);
+      
+      if (nextCamera) {
+        overlay.updateNextCamera(
+          formatDistance(nextCamera.distance_meters),
+          getCameraTypeLabel(nextCamera)
+        );
+      } else {
+        overlay.updateNextCamera('--', '');
+      }
+    }
+  }, [speed, nextCamera, drivingMode, overlay.isRunning]);
+
   const handleAppStateChange = (nextAppState: AppStateStatus) => {
     setAppState(nextAppState);
-    if (nextAppState === 'active' && drivingMode) {
-      fetchNearbyData();
+    if (nextAppState === 'active') {
+      // Check overlay permission when returning to app
+      if (overlay.isAvailable) {
+        overlay.checkPermission();
+      }
+      if (drivingMode) {
+        fetchNearbyData();
+      }
     }
   };
 
@@ -227,11 +270,9 @@ export default function DrivingMode() {
     const newCooldowns = new Map(alertCooldowns);
 
     for (const item of allItems) {
-      // Check if within alert distance
       if (item.distance_meters <= alertDistance) {
         const lastAlerted = alertCooldowns.get(item.id) || 0;
         
-        // Check cooldown (3 minutes between alerts for same camera)
         if (now - lastAlerted > ALERT_COOLDOWN_MS) {
           triggerAlert(item);
           newCooldowns.set(item.id, now);
@@ -327,6 +368,24 @@ export default function DrivingMode() {
   };
 
   const toggleDrivingMode = async () => {
+    // Check overlay permission on Android first
+    if (Platform.OS === 'android' && overlay.isAvailable && !overlay.hasPermission) {
+      setOverlayPermissionNeeded(true);
+      const granted = await overlay.requestPermission();
+      if (!granted) {
+        Alert.alert(
+          'Overlay Permission Required',
+          'Please enable "Display over other apps" permission to use the floating overlay while using other apps.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
+      }
+      setOverlayPermissionNeeded(false);
+    }
+
     const newValue = !drivingMode;
     setDrivingMode(newValue);
     await AsyncStorage.setItem('drivingMode', String(newValue));
@@ -378,49 +437,6 @@ export default function DrivingMode() {
 
   const nearbyAlerts = [...cameras, ...reports].filter(item => item.distance_meters <= 1000);
 
-  // Mini Overlay Mode (Collapsed)
-  if (drivingMode && !isOverlayExpanded) {
-    return (
-      <SafeAreaView style={styles.miniOverlayContainer}>
-        <TouchableOpacity 
-          style={styles.miniOverlay}
-          onPress={() => setIsOverlayExpanded(true)}
-          activeOpacity={0.9}
-        >
-          <View style={styles.miniOverlayLeft}>
-            <View style={[styles.statusDot, drivingMode && styles.statusDotActive]} />
-            <Text style={styles.miniOverlayText}>Alerts ON</Text>
-            <Text style={styles.miniSpeedText}>{speed} mph</Text>
-          </View>
-          
-          <TouchableOpacity
-            style={styles.miniReportBtn}
-            onPress={() => handleReport('mobile_camera')}
-            disabled={isReporting}
-          >
-            <Ionicons name="camera" size={18} color="#fff" />
-            <Text style={styles.miniReportText}>Report</Text>
-          </TouchableOpacity>
-        </TouchableOpacity>
-
-        {nextCamera && (
-          <View style={styles.miniNextCamera}>
-            <Text style={styles.miniNextText}>
-              Next: {getCameraTypeLabel(nextCamera)} • {formatDistance(nextCamera.distance_meters)}
-            </Text>
-          </View>
-        )}
-
-        {reportFeedback && (
-          <View style={styles.miniFeedback}>
-            <Text style={styles.miniFeedbackText}>{reportFeedback}</Text>
-          </View>
-        )}
-      </SafeAreaView>
-    );
-  }
-
-  // Full Driving Mode (Expanded)
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -456,24 +472,29 @@ export default function DrivingMode() {
           />
           <View style={styles.drivingModeText}>
             <Text style={[styles.drivingModeLabel, drivingMode && styles.drivingModeLabelActive]}>
-              Driving Mode
+              Driving Mode {Platform.OS === 'android' ? '+ Overlay' : ''}
             </Text>
             <Text style={styles.drivingModeStatus}>
-              {drivingMode ? 'Alerts active • Tap to minimize' : 'Tap to enable alerts'}
+              {drivingMode 
+                ? (overlay.isRunning ? 'Overlay active • Tap to disable' : 'Alerts active')
+                : 'Tap to enable alerts'}
             </Text>
           </View>
         </View>
         <View style={[styles.drivingModeIndicator, drivingMode && styles.drivingModeIndicatorActive]} />
       </TouchableOpacity>
 
-      {/* Collapse Button when Driving Mode is ON */}
-      {drivingMode && (
+      {/* Overlay Permission Banner */}
+      {Platform.OS === 'android' && overlay.isAvailable && !overlay.hasPermission && drivingMode && (
         <TouchableOpacity 
-          style={styles.collapseBtn}
-          onPress={() => setIsOverlayExpanded(false)}
+          style={styles.permissionBanner}
+          onPress={() => overlay.requestPermission()}
         >
-          <Ionicons name="chevron-up" size={20} color="#94a3b8" />
-          <Text style={styles.collapseBtnText}>Minimize to overlay</Text>
+          <Ionicons name="alert-circle" size={20} color="#fbbf24" />
+          <Text style={styles.permissionText}>
+            Enable overlay permission for floating widget
+          </Text>
+          <Ionicons name="chevron-forward" size={20} color="#fbbf24" />
         </TouchableOpacity>
       )}
 
@@ -584,6 +605,7 @@ export default function DrivingMode() {
       <View style={styles.footer}>
         <Text style={styles.footerText}>
           {cameras.length} cameras • {reports.length} reports nearby
+          {overlay.isRunning && ' • Overlay active'}
         </Text>
       </View>
     </SafeAreaView>
@@ -671,16 +693,23 @@ const styles = StyleSheet.create({
   drivingModeIndicatorActive: {
     backgroundColor: '#22c55e',
   },
-  collapseBtn: {
+  permissionBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 6,
+    backgroundColor: '#422006',
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    gap: 8,
   },
-  collapseBtnText: {
-    color: '#64748b',
-    fontSize: 12,
+  permissionText: {
+    flex: 1,
+    color: '#fbbf24',
+    fontSize: 13,
+    fontWeight: '500',
   },
   speedContainer: {
     alignItems: 'center',
@@ -859,90 +888,5 @@ const styles = StyleSheet.create({
   footerText: {
     color: '#64748b',
     fontSize: 13,
-  },
-  // Mini Overlay Styles
-  miniOverlayContainer: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-  },
-  miniOverlay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#1e293b',
-    marginHorizontal: 16,
-    marginTop: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 24,
-    borderWidth: 2,
-    borderColor: '#22c55e',
-  },
-  miniOverlayLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#64748b',
-  },
-  statusDotActive: {
-    backgroundColor: '#22c55e',
-  },
-  miniOverlayText: {
-    color: '#22c55e',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  miniSpeedText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  miniReportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#dc2626',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    gap: 6,
-  },
-  miniReportText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  miniNextCamera: {
-    backgroundColor: '#422006',
-    marginHorizontal: 16,
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-  },
-  miniNextText: {
-    color: '#fbbf24',
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  miniFeedback: {
-    backgroundColor: '#166534',
-    marginHorizontal: 16,
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-  },
-  miniFeedbackText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
   },
 });
