@@ -347,6 +347,19 @@ async def seed_sample_cameras():
     
     return {"message": f"Seeded {len(sample_cameras)} sample cameras", "count": len(sample_cameras)}
 
+# File download endpoint
+@api_router.get("/download/{filename}")
+async def download_file(filename: str):
+    """Download files from the server"""
+    file_path = ROOT_DIR / filename
+    if file_path.exists() and filename.endswith('.zip'):
+        return FileResponse(
+            path=str(file_path),
+            filename=filename,
+            media_type='application/zip'
+        )
+    raise HTTPException(status_code=404, detail="File not found")
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -361,19 +374,3 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
-
-# File download endpoint
-from fastapi.responses import FileResponse
-import os
-
-@api_router.get("/download/{filename}")
-async def download_file(filename: str):
-    """Download files from the server"""
-    file_path = os.path.join(ROOT_DIR, filename)
-    if os.path.exists(file_path) and filename.endswith('.zip'):
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type='application/zip'
-        )
-    raise HTTPException(status_code=404, detail="File not found")
