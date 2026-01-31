@@ -3,22 +3,27 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useSegments } from 'expo-router';
+import { useRouter, useSegments, usePathname } from 'expo-router';
+import { Platform } from 'react-native';
 
 export default function RootLayout() {
   const [isOnboarded, setIsOnboarded] = useState<boolean | null>(null);
   const router = useRouter();
   const segments = useSegments();
+  const pathname = usePathname();
 
   useEffect(() => {
     checkOnboarding();
   }, []);
 
   useEffect(() => {
-    if (isOnboarded === false && segments[0] !== 'onboarding') {
+    // Only redirect to onboarding on native platforms, not web
+    // Also allow access to settings and admin directly
+    const allowedPaths = ['/onboarding', '/settings', '/admin', '/map'];
+    if (Platform.OS !== 'web' && isOnboarded === false && !allowedPaths.includes(pathname)) {
       router.replace('/onboarding');
     }
-  }, [isOnboarded, segments]);
+  }, [isOnboarded, pathname]);
 
   const checkOnboarding = async () => {
     try {
