@@ -34,5 +34,12 @@
         <data android:scheme="drivesafe"/>
       </intent-filter>
     </activity>
+    
+    <!-- Overlay Foreground Service -->
+    <service
+      android:name=".overlay.OverlayService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="location" />
   </application>
 </manifest>
