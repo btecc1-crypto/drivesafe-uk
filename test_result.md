@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "UK-focused driver app for licensed taxi/private hire drivers with speed camera proximity alerts, community reporting (mobile camera and police check), voice alerts using expo-speech, map view, and driving mode UI."
+user_problem_statement: "UK-focused driver app for licensed taxi/private hire drivers with speed camera proximity alerts, community reporting (mobile camera and police check), voice alerts using expo-speech, map view, driving mode UI with mini overlay, onboarding flow, and admin panel."
 
 backend:
   - task: "API root and health endpoints"
