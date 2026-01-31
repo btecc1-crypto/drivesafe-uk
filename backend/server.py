@@ -360,3 +360,19 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+# File download endpoint
+from fastapi.responses import FileResponse
+import os
+
+@api_router.get("/download/{filename}")
+async def download_file(filename: str):
+    """Download files from the server"""
+    file_path = os.path.join(ROOT_DIR, filename)
+    if os.path.exists(file_path) and filename.endswith('.zip'):
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/zip'
+        )
+    raise HTTPException(status_code=404, detail="File not found")
