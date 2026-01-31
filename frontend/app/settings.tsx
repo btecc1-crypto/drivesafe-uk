@@ -7,41 +7,71 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Linking,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
+import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [alertDistance, setAlertDistance] = useState(500);
+  const [locationPermission, setLocationPermission] = useState<string>('unknown');
+  const [backgroundPermission, setBackgroundPermission] = useState<string>('unknown');
+  const [notificationPermission, setNotificationPermission] = useState<string>('unknown');
 
   useEffect(() => {
     loadSettings();
+    checkPermissions();
   }, []);
 
   const loadSettings = async () => {
     try {
       const savedVoice = await AsyncStorage.getItem('voiceEnabled');
+      const savedSound = await AsyncStorage.getItem('soundEnabled');
       const savedDistance = await AsyncStorage.getItem('alertDistance');
       
       if (savedVoice !== null) setVoiceEnabled(savedVoice === 'true');
+      if (savedSound !== null) setSoundEnabled(savedSound === 'true');
       if (savedDistance !== null) setAlertDistance(parseInt(savedDistance));
     } catch (error) {
       console.error('Load settings error:', error);
     }
   };
 
+  const checkPermissions = async () => {
+    try {
+      const { status: locStatus } = await Location.getForegroundPermissionsAsync();
+      setLocationPermission(locStatus);
+
+      const { status: bgStatus } = await Location.getBackgroundPermissionsAsync();
+      setBackgroundPermission(bgStatus);
+
+      const { status: notifStatus } = await Notifications.getPermissionsAsync();
+      setNotificationPermission(notifStatus.status);
+    } catch (error) {
+      console.error('Permission check error:', error);
+    }
+  };
+
   const handleVoiceToggle = async (value: boolean) => {
     setVoiceEnabled(value);
     await AsyncStorage.setItem('voiceEnabled', String(value));
-    
     if (value) {
       Speech.speak('Voice alerts enabled', { language: 'en-GB', rate: 0.9 });
     }
+  };
+
+  const handleSoundToggle = async (value: boolean) => {
+    setSoundEnabled(value);
+    await AsyncStorage.setItem('soundEnabled', String(value));
   };
 
   const handleDistanceChange = async (distance: number) => {
@@ -55,6 +85,14 @@ export default function SettingsScreen() {
       pitch: 1.0,
       rate: 0.9,
     });
+  };
+
+  const openAppSettings = () => {
+    Linking.openSettings();
+  };
+
+  const requestPermissions = async () => {
+    router.push('/onboarding');
   };
 
   const clearData = async () => {
@@ -77,11 +115,19 @@ export default function SettingsScreen() {
   };
 
   const distanceOptions = [
+    { value: 150, label: '150m' },
     { value: 300, label: '300m' },
     { value: 500, label: '500m' },
     { value: 750, label: '750m' },
-    { value: 1000, label: '1km' },
   ];
+
+  const getPermissionColor = (status: string) => {
+    return status === 'granted' ? '#22c55e' : '#ef4444';
+  };
+
+  const getPermissionIcon = (status: string) => {
+    return status === 'granted' ? 'checkmark-circle' : 'close-circle';
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -94,18 +140,65 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={styles.content}>
-        {/* Voice Alerts Section */}
+        {/* Permissions Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Voice Alerts</Text>
+          <Text style={styles.sectionTitle}>Permissions</Text>
+          <Text style={styles.sectionDescription}>
+            Required for background alerts while driving
+          </Text>
+
+          <View style={styles.permissionsList}>
+            <View style={styles.permissionItem}>
+              <Ionicons name="location" size={20} color="#3b82f6" />
+              <Text style={styles.permissionLabel}>Location</Text>
+              <Ionicons 
+                name={getPermissionIcon(locationPermission)} 
+                size={20} 
+                color={getPermissionColor(locationPermission)} 
+              />
+            </View>
+            <View style={styles.permissionItem}>
+              <Ionicons name="navigate" size={20} color="#3b82f6" />
+              <Text style={styles.permissionLabel}>Background Location</Text>
+              <Ionicons 
+                name={getPermissionIcon(backgroundPermission)} 
+                size={20} 
+                color={getPermissionColor(backgroundPermission)} 
+              />
+            </View>
+            <View style={styles.permissionItem}>
+              <Ionicons name="notifications" size={20} color="#3b82f6" />
+              <Text style={styles.permissionLabel}>Notifications</Text>
+              <Ionicons 
+                name={getPermissionIcon(notificationPermission)} 
+                size={20} 
+                color={getPermissionColor(notificationPermission)} 
+              />
+            </View>
+          </View>
+
+          <View style={styles.permissionButtons}>
+            <TouchableOpacity style={styles.permissionBtn} onPress={requestPermissions}>
+              <Ionicons name="refresh" size={18} color="#fff" />
+              <Text style={styles.permissionBtnText}>Re-request</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsBtn} onPress={openAppSettings}>
+              <Ionicons name="settings" size={18} color="#3b82f6" />
+              <Text style={styles.settingsBtnText}>App Settings</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Alert Settings */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Alert Settings</Text>
           
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Ionicons name="volume-high" size={24} color="#3b82f6" />
               <View style={styles.settingText}>
                 <Text style={styles.settingLabel}>Voice Alerts</Text>
-                <Text style={styles.settingDescription}>
-                  Speak alerts when approaching cameras
-                </Text>
+                <Text style={styles.settingDescription}>Spoken camera warnings</Text>
               </View>
             </View>
             <Switch
@@ -116,16 +209,29 @@ export default function SettingsScreen() {
             />
           </View>
 
-          <TouchableOpacity
-            style={styles.testButton}
-            onPress={testVoiceAlert}
-          >
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Ionicons name="notifications" size={24} color="#3b82f6" />
+              <View style={styles.settingText}>
+                <Text style={styles.settingLabel}>Sound Alerts</Text>
+                <Text style={styles.settingDescription}>Notification sounds</Text>
+              </View>
+            </View>
+            <Switch
+              value={soundEnabled}
+              onValueChange={handleSoundToggle}
+              trackColor={{ false: '#374151', true: '#22c55e' }}
+              thumbColor="#fff"
+            />
+          </View>
+
+          <TouchableOpacity style={styles.testButton} onPress={testVoiceAlert}>
             <Ionicons name="play" size={20} color="#fff" />
             <Text style={styles.testButtonText}>Test Voice Alert</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Alert Distance Section */}
+        {/* Alert Distance */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Alert Distance</Text>
           <Text style={styles.sectionDescription}>
@@ -155,7 +261,21 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* About Section */}
+        {/* Admin Panel Link */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Administration</Text>
+          
+          <TouchableOpacity 
+            style={styles.adminButton}
+            onPress={() => router.push('/admin')}
+          >
+            <Ionicons name="construct" size={20} color="#f97316" />
+            <Text style={styles.adminButtonText}>Camera Admin Panel</Text>
+            <Ionicons name="chevron-forward" size={20} color="#64748b" />
+          </TouchableOpacity>
+        </View>
+
+        {/* About */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           
@@ -163,9 +283,8 @@ export default function SettingsScreen() {
             <Ionicons name="shield-checkmark" size={32} color="#22c55e" />
             <Text style={styles.infoTitle}>Road Safety Tool</Text>
             <Text style={styles.infoText}>
-              DriveSafe UK is designed to help professional drivers maintain speed
-              compliance and stay safe on UK roads. This app is a road safety
-              tool, not intended to help evade law enforcement.
+              DriveSafe UK helps professional drivers maintain speed compliance.
+              This is a road safety tool, not intended to help evade law enforcement.
             </Text>
           </View>
 
@@ -185,14 +304,11 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Data Section */}
+        {/* Data */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Data</Text>
           
-          <TouchableOpacity
-            style={styles.dangerButton}
-            onPress={clearData}
-          >
+          <TouchableOpacity style={styles.dangerButton} onPress={clearData}>
             <Ionicons name="trash-outline" size={20} color="#ef4444" />
             <Text style={styles.dangerButtonText}>Clear Local Data</Text>
           </TouchableOpacity>
@@ -252,6 +368,59 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 16,
   },
+  permissionsList: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 12,
+  },
+  permissionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
+  },
+  permissionLabel: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+  },
+  permissionButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  permissionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3b82f6',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  permissionBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  settingsBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+  },
+  settingsBtnText: {
+    color: '#3b82f6',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   settingRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -296,13 +465,13 @@ const styles = StyleSheet.create({
   },
   distanceOptions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   distanceOption: {
     flex: 1,
     backgroundColor: '#1e293b',
     borderRadius: 12,
-    paddingVertical: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'transparent',
@@ -313,11 +482,25 @@ const styles = StyleSheet.create({
   },
   distanceOptionText: {
     color: '#94a3b8',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
   },
   distanceOptionTextActive: {
     color: '#3b82f6',
+  },
+  adminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  adminButtonText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   infoCard: {
     backgroundColor: '#1e293b',
