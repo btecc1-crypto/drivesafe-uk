@@ -82,3 +82,7 @@ android-sdk/ drivesafe-android-build.tar.gz
 # Environment files
 *.env
 *.env.*
+-e 
+# Environment files
+*.env
+*.env.*
